@@ -6,6 +6,7 @@ format: html
 editor: visual
 ---
 
+
 # **Project Checkpoint 1**
 
 ## **Data Context**
@@ -49,6 +50,7 @@ The cases by year dataset is cleaned in a bit more detail. First, the first row 
 
 # **Project Checkpoint 2**
 
+
 ```{r}
 #| label: Load in Data and libraries
 #| results: 'hide'
@@ -68,11 +70,13 @@ cases_month <- readr::read_csv('https://raw.githubusercontent.com/rfordatascienc
 cases_year <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/main/data/2025/2025-06-24/cases_year.csv')
 ```
 
+
 ### **Months with highest measles case count each year**
 
 *Existing columns summary:*
 
 *Custom function and iteration*
+
 
 ```{r}
 # function to get the month of a year with the highest number of cases
@@ -111,11 +115,13 @@ cases_year |>
   )
 ```
 
+
 ### Proportion of suspected measles cases that are discarded by region (in a single year)
 
 *Existing columns summary:*
 
 *Custom function*
+
 
 ```{r}
 # function to get proportion of suspected cases that are discarded for each region in a given year
@@ -160,11 +166,13 @@ prop_discarded_by_region(cases_month, 2022) |>
   )
 ```
 
+
 ### **Epidemiologically-linked case proportions by region and year**
 
 *Modified columns summary:*
 
 *Custom function and iteration*
+
 
 ```{r}
 # function to get proportion of cases that are epidemiologically-linked for each year in one region
@@ -217,11 +225,13 @@ epi_proportions <- function(region) {
    )
 ```
 
+
 ### Measles cases for years following vaccine introduction
 
 *Modified columns summary:*
 
 *Iteration*
+
 
 ```{r}
 #| label: Load in Vaccine Data
@@ -364,3 +374,213 @@ measles_region_patterns |>
     locations = cells_column_labels()
   ) 
 ```
+
+
+# **Project Checkpoint 3**
+
+
+```{r}
+#| label: Load in more libraries
+#| results: 'hide'
+#| message: false
+#| warning: false
+#| echo: false
+
+library(rvest)
+library(tidyverse)
+library(chromote)
+library(httr)
+```
+
+
+### Acquire new country-level data source using webscraping: GDP per capita
+
+
+```{r}
+# function to scrape one year of gdp data
+scrape_gdp_year <- function(year) {
+  
+  # create url for a specific year
+  url <- paste0(
+    "https://ourworldindata.org/grapher/gdp-per-capita-worldbank",
+    "?tab=table&time=", year, "..", year,
+    "&tableFilter=countries"
+  )
+  
+  # open browser session: page is dynamic (live)
+  b <- ChromoteSession$new()
+  
+  # browser closes after function
+  on.exit(try(b$close(), silent = TRUE), add = TRUE)
+  
+  # go to page
+  b$Page$navigate(url)
+  
+  # wait for loaded table
+  Sys.sleep(5)
+  
+  # get rendered html from the page
+  eval_result <- b$Runtime$evaluate("document.documentElement.outerHTML")
+  rendered_html <- eval_result$result$value
+  
+  # read html into r
+  page <- read_html(rendered_html)
+  
+  # extract the table from the page
+  tab <- page |>
+    html_element("table") |>
+    html_table()
+  
+  # keep only country and gdp
+  tab_clean <- tab[, 1:2]
+  names(tab_clean) <- c("country", "gdp_per_capita")
+  
+  # clean the data
+  tab_clean <- tab_clean |>
+    mutate(
+      scraped_year = year, # year                              
+      gdp_per_capita = str_remove_all(gdp_per_capita, "\\$|,"), # remove $ and ,
+      gdp_per_capita = na_if(gdp_per_capita, ""), # empty is NA
+      gdp_per_capita = as.numeric(gdp_per_capita) # convert to numeric
+    ) |>
+    filter(country != "Country or region") |>
+    filter(!is.na(country))
+  tab_clean
+}
+
+# create vector of years to scrape
+years <- 2012:2024
+
+# loop over all years, then combine
+gdp_web <- map_dfr(years, scrape_gdp_year)
+gdp_web
+```
+
+
+### Acquire new country-level data source using API (Checking webscraping result): GDP per capita
+
+
+```{r}
+# url for owid gdp data
+gdp_url <- "https://ourworldindata.org/grapher/gdp-per-capita-worldbank.csv?v=1&csvType=full&useColumnShortNames=false"
+
+# send request to API
+response <- GET(gdp_url)
+
+# check status
+#status_code(response)
+
+# extract content
+gdp_raw <- content(response, as = "text", encoding = "UTF-8")
+
+# read the csv text into a DF
+gdp_api <- read_csv(gdp_raw, 
+                    show_col_types = FALSE) |>
+  # keep years 2012 to 2024
+  filter(Year >= 2012, Year <= 2024)
+gdp_api
+```
+
+
+### Data Context: GDP per capita 
+
+This dataset contains country-level GDP per capita data, where the observations are countries and regions around the world. The data includes over 200 countries' GDP, and ranges from 1990 to 2024, and our Measles project focuses on the years 2012 through 2024. GDP per capita is calculated by dividing a country’s total output by its population and adjusting values with the same international dollars to take into account inflation and living cost differences. The goal of this data is to compare economic performance, living conditions, and economic growth across almost all countries over many years. The data is created by organizations such as the World Bank, IMF, OECD, and Eurostat, and is summarized by Our World in Data. GDP data is collected by national statistical agencies using censuses, surveys, and tax or government data, and then analyzed and organized by the World Bank, IMF, etc.
+
+### Data Joining
+
+
+```{r}
+# clean gdp data so country and year match the cases data
+gdp_web_clean <- gdp_web |>
+  rename(
+    country = country,
+    year = scraped_year
+  )
+# join gdp data to the yearly cases data
+cases_year_gdp <- cases_year |>
+  left_join(gdp_web_clean,
+            by = c("country", "year"))
+# join the yearly gdp/cases data to the monthly cases data
+cases_gdp <- cases_month |>
+  left_join(
+    cases_year_gdp,
+    by = c("country", "year"),
+    suffix = c("_month", "_year")
+  )
+```
+
+
+### Data Visualization: GDP per capita 
+
+
+```{r}
+# create dataset: epi-linked cases and join average gdp across all years
+cases_gdp_country <- cases_year |>
+  
+  # remove 2025 for plotting (no gdp data)
+  filter(year != 2025) |>
+  
+  # group by country and region
+  group_by(country, region) |>
+  
+  # sum epidemiologically linked cases
+  summarise(
+    epi_linked = sum(measles_epi_linked, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  
+  # join average gdp per country
+  left_join(
+    gdp_web |>
+      group_by(country) |>
+      summarise(
+        avg_gdp_per_capita = mean(gdp_per_capita, na.rm = TRUE),
+        .groups = "drop"
+      ),
+    by = "country"
+  ) |>
+  
+  # rename regions to full names
+  mutate(
+    region = recode(region,
+      "AFRO" = "Africa",
+      "AMRO" = "Americas",
+      "EMRO" = "Eastern mediterranean",
+      "EURO" = "Europe",
+      "SEARO" = "South-east asia",
+      "WPRO" = "Western pacific"
+    )
+  ) |>
+  
+  # remove missing values and limit cases
+  filter(
+    !is.na(avg_gdp_per_capita),
+    !is.na(epi_linked),
+    epi_linked <= 20000
+  )
+
+# create plot
+ggplot(cases_gdp_country,
+       aes(x = avg_gdp_per_capita,
+           y = epi_linked,
+           color = region)) +
+  geom_point(alpha = 0.8, size = 2) +
+  # add trend line
+  geom_smooth(method = "lm", formula = y ~ x, se = FALSE, linetype = "dashed") +
+  # no scientific notation for GDP
+  scale_x_log10(labels = scales::comma) +
+  # show full numbers on y axis
+  scale_y_continuous(labels = scales::comma) +
+  # labels
+  labs(
+    x = "Average gdp per capita (2012-2024)",
+    y = "Total epidemiologically linked measles cases",
+    title = "Epidemiologically Linked Measles Cases by GDP per capita",
+    color = "region"
+  ) +
+  theme_minimal()
+```
+
+
+This scatterplot shows the relationship between average GDP per capita and total epidemiologically linked measles cases for all countries. Each point represents one country, with average GDP and totaled case numbers from years 2012 to 2024. Countries with higher GDP per capita tend to be associated with less epidemiologically linked measles cases. Regional differences are also shown, as some countries in lower income/economy regions tend to have higher case counts.
+
