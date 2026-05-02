@@ -1,0 +1,374 @@
+---
+title: "Project GDP Supplemental"
+embed-resources: true
+format: 
+  html:
+    toc: true
+editor: visual
+---
+
+### Load New Packages!
+
+```{r}
+#| label: Load in Data and libraries
+#| results: 'hide'
+#| message: false
+#| warning: false
+#| echo: false
+library(tidyverse)
+library(here)
+library(readxl)
+library(janitor)
+library(gt)
+#install.packages("xfun")
+library(xfun)
+library(httr)
+library(tidyjson)
+library(jsonlite)
+library(rvest)
+library(chromote)
+#install.packages("hexbin")
+library(hexbin)
+library(ggridges)
+library(viridis)
+
+#NEW PACKAGES TO ADD
+library(stringr)
+library(stringi)
+#install.packages("patchwork")
+library(patchwork)
+
+cases_month <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/main/data/2025/2025-06-24/cases_month.csv') |>
+  clean_names()
+cases_year <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/main/data/2025/2025-06-24/cases_year.csv')
+gdp_web <- readr::read_csv("gdp_web.csv")
+```
+
+### New Data Joining!
+
+```{r}
+clean_country <- function(x) {
+  x |>
+    stri_trans_general("Latin-ASCII") |>
+    str_to_lower() |>
+    str_replace_all("&", "and") |>
+    str_remove_all("[[:punct:]]") |>
+    str_squish()
+}
+
+gdp_web_clean <- gdp_web |>
+  rename(year = scraped_year) |>
+  mutate(
+    year = as.numeric(year),
+    country_join = recode(country,
+      "United States" = "United States of America",
+      "Bolivia" = "Bolivia (Plurinational State of)",
+      "Venezuela" = "Venezuela (Bolivarian Republic of)"
+    ),
+    country_key = clean_country(country_join)
+  )
+
+cases_year_clean <- cases_year |>
+  mutate(
+    year = as.numeric(year),
+    country_key = clean_country(country)
+  )
+
+cases_year_gdp <- cases_year_clean |>
+  left_join(
+    gdp_web_clean |>
+      select(country_key, year, gdp_per_capita),
+    by = c("country_key", "year")
+  )
+
+# join the yearly gdp/cases data to the monthly cases data
+cases_gdp <- cases_month |>
+  left_join(
+    cases_year_gdp,
+    by = c("country", "year"),
+    suffix = c("_month", "_year")
+  ) |>
+  # make a tibble to join (threw an error without this)
+  as_tibble()
+```
+
+### Data Visualizations
+
+#### Preparing data for visualization by removing year not available, renaming region acronyms for their representative names, and removing missing data.
+
+```{r}
+# create yearly country-level dataset with GDP joined
+cases_gdp_year <- cases_year |>
+  filter(year != 2025) |>
+  mutate(
+    year = as.numeric(year),
+    measles_epi_linked = as.numeric(measles_epi_linked)
+  ) |>
+  left_join(
+    gdp_web |>
+      rename(year = scraped_year) |>
+      select(country, year, gdp_per_capita),
+    by = c("country", "year")
+  ) |>
+  mutate(
+    region = recode(region,
+      "AFRO" = "Africa",
+      "AMRO" = "Americas",
+      "EMRO" = "Eastern Mediterranean",
+      "EURO" = "Europe",
+      "SEARO" = "South-East Asia",
+      "WPRO" = "Western Pacific"
+    )
+  ) |>
+  filter(
+    !is.na(measles_epi_linked),
+    !is.na(gdp_per_capita),
+    measles_epi_linked > 0
+  )
+```
+
+#### GDP per capita Visual 1
+
+```{r}
+#| fig-cap-location: bottom
+#| fig-cap: Figure 3. GDP per capita over years by region.
+#| message: false
+#| fig-width: 16
+#| fig-height: 12
+#| fig-alt: "Faceted scatterplot of epidemiologically linked measles cases over time by region, with log-scaled y-axis and point color representing GDP per capita."
+
+# faceted plot by region
+ggplot(cases_gdp_year,
+       aes(x = year,
+           y = measles_epi_linked,
+           color = gdp_per_capita)) +
+  geom_jitter(alpha = 0.9, size = 3, width = 0.25, height = 0.1) +
+  scale_y_log10(labels = scales::comma) +
+  scale_x_continuous(breaks = c(2012, 2016, 2020, 2024)) +
+  scale_color_gradient(
+    low = "#A6DAF5",
+    high = "#3E3F3A",
+    labels = scales::comma
+  ) +
+  facet_wrap(~ region, ncol = 2, scales = "free_y") +
+  labs(
+    title = "Epidemiologically Linked Measles Cases Over Time by Region",
+    subtitle = "Each point represents a country-year; color shows GDP per capita",
+    x = "Year",
+    y = "Epidemiologically linked measles cases (log scale)",
+    color = "GDP per capita"
+  ) +
+  theme_minimal(base_size = 25)
+```
+
+#### GDP per capita Visual 2 and 3
+
+```{r}
+#| fig-cap-location: bottom
+#| fig-cap: "Figure 4. Epidemiologically Linked Measles Cases and GDP per Capita by Region"
+#| warning: false
+#| fig-alt: "Two side-by-side ridgeline density plots by region. The left plot shows the distribution of epidemiologically linked measles cases across country-year observations from 2012 to 2024. The right plot shows the distribution of GDP per capita across the same regions and years."
+#| fig-width: 18
+#| fig-height: 8
+
+epi_region_plot <- cases_gdp_year |>
+  ggplot(aes(x = log1p(measles_epi_linked),
+             y = region,
+             fill = ..x..)) +
+  geom_density_ridges_gradient(scale = 2, rel_min_height = 0.01) +
+  scale_x_continuous(
+    breaks = log1p(c(0, 10, 100, 1000, 10000)),
+    labels = scales::comma(c(0, 10, 100, 1000, 10000))
+  ) +
+  scale_fill_gradient(
+    low = "#F8F5F0",
+    high = "#325D88"
+  ) +
+  scale_y_discrete(expand = c(0.0001, 0.5)) +
+  labs(
+    #title = "Distribution of Epidemiologically Linked Measles Cases by Region",
+    #subtitle = "Country-year observations from 2012–2024",
+    x = "Epidemiologically linked measles cases (log scale)",
+    y = "",
+    fill = "Cases"
+  ) +
+  theme_minimal(base_size = 20) +
+  theme(
+    panel.grid.minor.x = element_blank(),
+    legend.position = "none"
+  )
+
+gdp_region <- cases_gdp_year |>
+  ggplot(aes(x = gdp_per_capita,
+             y = region,
+             fill = ..x..)) +
+  geom_density_ridges_gradient(scale = 2, rel_min_height = 0.01) +
+  scale_x_log10(labels = scales::label_comma()) +
+  scale_fill_gradient(
+    low = "#A6DAF5",
+    high = "#3E3F3A"
+  ) +
+  scale_y_discrete(expand = c(0.0001, 0.5)) +
+  labs(
+    #title = "Distribution of GDP per Capita by Region",
+    #subtitle = "Country-year observations from 2012–2024",
+    x = "GDP per capita (log scale)",
+    y = "",
+    fill = "GDP per capita"
+  ) +
+  theme_minimal(base_size = 20) +
+  theme(
+    panel.grid.minor.x = element_blank(),
+    legend.position = "none"
+  )
+
+epi_region_plot + gdp_region +
+  plot_layout(ncol = 2) +
+  plot_annotation(
+    title = "Distributions of Measles Cases and GDP per Capita by Region",
+    subtitle = "These plots show country-year distributions from 2012–2024",
+    theme = theme(
+      plot.title = element_text(size = 26),
+      plot.subtitle = element_text(size = 18)
+    )
+  )
+```
+
+### Table 1
+
+```{r}
+#| tbl-cap-location: bottom
+#| tbl-cap: Table 3. Confirmed Measles Cases that are Epidemiologically-linked
+
+# function to get proportion of cases that are epidemiologically-linked for each year in one region
+epi_proportions <- function(region_code) {
+  cases_month |>
+    filter(.data$region == region_code) |>
+    group_by(year) |>
+    # get total counts for each year
+    summarise(
+      # measles total epidemiologically-linked and lab confirmed
+      measles_epi_linked = sum(measles_epi_linked, na.rm = TRUE),
+      measles_lab_confirmed = sum(measles_lab_confirmed, na.rm = TRUE),
+      .groups = "drop"
+    ) |>
+    # modify columns by calculating proportions
+    mutate(
+      prop_epi_measles = measles_epi_linked / 
+        (measles_epi_linked + measles_lab_confirmed)
+    ) |>
+    select(year, prop_epi_measles)
+}
+
+cases_month |>
+  distinct(region) |>
+  # rename regions to full names
+  mutate(
+    region_name = recode(region,
+      "AFR" = "Africa",
+      "AMR" = "Americas",
+      "EMR" = "Eastern Mediterranean",
+      "EUR" = "Europe",
+      "SEAR" = "South-East Asia",
+      "WPR" = "Western Pacific"
+    )
+  ) |>
+  # apply function to get proportions for each region
+  mutate(epi_props = map(region, epi_proportions)) |>
+  # get columns from returned map lists
+  unnest(epi_props) |>
+  # keep only region name, year, and proportion
+  select(region_name, year, prop_epi_measles) |>
+  # group by region so the table is divided by region
+  group_by(region_name) |>
+  # make a gt table
+  gt() |>
+  # format the proportion columns to be percents 
+  fmt_percent(columns = matches("prop"), decimals = 1) |>
+  # bold region group labels
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_row_groups()
+  ) |>
+  # rename and bold column names
+  cols_label(
+    region_name = md("**Region**"),
+    year = md("**Year**"),
+    prop_epi_measles = md("**Epidemiologically-linked measles cases**")
+  ) |>
+  # add a table title
+  tab_header(
+    title = md("Proportion of Confirmed Cases that are Epidemiologically-linked")
+  ) |>
+  # add a table caption
+  tab_caption(
+    caption = md("Changes in each region's confirmed measles cases makeup over time.")
+  )
+```
+
+### Table 2
+
+```{r}
+#| tbl-cap-location: bottom
+#| tbl-cap: Table 4. Epidemiologically-linked counts by GDP levels of regions.
+
+# calculation of global GDP level groups: low, medium, and high
+cases_gdp_year_global <- cases_gdp_year |>
+  mutate(
+    gdp_group = ntile(gdp_per_capita, 3),
+    gdp_group = recode(as.character(gdp_group),
+      "1" = "Low GDP",
+      "2" = "Medium GDP",
+      "3" = "High GDP"
+    ),
+    gdp_group = factor(gdp_group,
+      levels = c("Low GDP", "Medium GDP", "High GDP")
+    )
+  )
+
+# function to get total epidemiologically-linked cases by GDP group for one region
+gdp_epi_groups <- function(region_name) {
+  cases_gdp_year_global |>
+    filter(.data$region == region_name) |>
+    group_by(gdp_group) |>
+    summarise(
+      epi_linked_cases = sum(measles_epi_linked, na.rm = TRUE),
+      .groups = "drop"
+    )
+}
+
+cases_gdp_year |>
+  distinct(region) |>
+  # apply function to get GDP groups for each region
+  mutate(gdp_epi = map(region, gdp_epi_groups)) |>
+  # get columns from returned map lists
+  unnest(gdp_epi) |>
+  # keep GDP levels with 0 cases
+  complete(region, gdp_group, fill = list(epi_linked_cases = 0)) |>
+  # group by region so the table is divided by region
+  group_by(region) |>
+  # make a gt table
+  gt() |>
+  # format the epidemiologically-linked case counts
+  fmt_number(columns = epi_linked_cases, decimals = 0) |>
+  # bold region group labels
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_row_groups()
+  ) |>
+  # rename and bold column names
+  cols_label(
+    region = md("**Region**"),
+    gdp_group = md("**GDP Level**"),
+    epi_linked_cases = md("**Epidemiologically-linked measles cases**")
+  ) |>
+  # add a table title
+  tab_header(
+    title = md("Epidemiologically-linked Measles Cases by Regional GDP Level")
+  ) |>
+  # add a table caption
+  tab_caption(
+    caption = md("Total epidemiologically-linked measles cases grouped by global GDP per capita low, medium, and 
+                 high within each region. Based on yearly country observations from 2012–2024.")
+  )
+```

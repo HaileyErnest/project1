@@ -1,0 +1,348 @@
+---
+title: "Project 1 Final Deliverable"
+author: "Hailey Ernest and Nicole Yee"
+format: html
+editor: visual
+embed-resources: true
+theme: sandstone
+code-fold: true
+---
+
+## Data Context
+
+```{r}
+#| label: Load in Data and libraries
+#| results: 'hide'
+#| message: false
+#| warning: false
+#| echo: false
+
+library(tidyverse)
+library(here)
+library(readxl)
+library(janitor)
+library(gt)
+#install.packages("xfun")
+library(xfun)
+library(httr)
+library(tidyjson)
+library(jsonlite)
+library(rvest)
+library(chromote)
+#install.packages("hexbin")
+library(hexbin)
+library(ggridges)
+library(viridis)
+library(patchwork)
+library(glue)
+
+cases_month <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/main/data/2025/2025-06-24/cases_month.csv') |>
+  clean_names()
+cases_year <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/main/data/2025/2025-06-24/cases_year.csv')
+
+gdp_web <- readr::read_csv('gdp_web.csv')
+```
+
+```{r}
+#| label: Webscraping GDP data
+#| warning: false
+#| message: false
+#| eval: false
+
+# function to scrape one year of gdp data
+scrape_gdp_year <- function(year) {
+  
+  # create url for a specific year
+  url <- glue("https://ourworldindata.org/grapher/gdp-per-capita-worldbank?tab=table&time={year}..{year}&tableFilter=countries")
+  
+  # open browser session: page is dynamic (live)
+  b <- ChromoteSession$new()
+  
+  # browser closes after function
+  on.exit(try(b$close(), silent = TRUE), add = TRUE)
+  
+  # go to page
+  b$Page$navigate(url)
+  
+  # wait for loaded table
+  Sys.sleep(5)
+  
+  # get rendered html from the page
+  eval_result <- b$Runtime$evaluate("document.documentElement.outerHTML")
+  rendered_html <- eval_result$result$value
+  
+  # read html into r
+  page <- read_html(rendered_html)
+  
+  # extract the table from the page
+  tab <- page |>
+    html_element("table") |>
+    html_table()
+  
+  # keep only country and gdp
+  tab_clean <- tab[, 1:2]
+  names(tab_clean) <- c("country", "gdp_per_capita")
+  
+  # clean the data
+  tab_clean <- tab_clean |>
+    mutate(
+      scraped_year = year, # year                              
+      gdp_per_capita = str_remove_all(gdp_per_capita, "\\$|,"), # remove $ and ,
+      gdp_per_capita = na_if(gdp_per_capita, ""), # empty is NA
+      gdp_per_capita = as.numeric(gdp_per_capita) # convert to numeric
+    ) |>
+    filter(country != "Country or region") |>
+    filter(!is.na(country))
+  tab_clean
+}
+
+# create vector of years to scrape
+years <- 2012:2024
+
+# loop over all years, then combine
+gdp_web <- map_dfr(years, scrape_gdp_year)
+head(gdp_web)
+```
+
+We utilized data from several sources. Our report is mainly centered around measles cases, but we incorporated additional data about GDP.
+
+Our main set of data presents suspected and confirmed classification of measles and rubella cases across regions and countries in the world. It is presented in two forms: monthly case counts (cases_month) and yearly summaries (cases_year). The data is collected and reported by healthcare providers and national surveillance systems and compiled by the World Health Organization (WHO). The data was downloaded on June 12, 2025, and is finalized by July of each year. The data covers regions and countries worldwide. The data is collected to track and confirm measles and rubella cases across populations over time. Suspected measles cases are identified based on symptoms or clinical judgment, reported through national surveillance systems to the WHO, and then classified as clinically compatible, epidemiologically linked, or laboratory-confirmed, with total measles cases calculated as the sum of these categories for most countries.
+
+We additionally used country-level GDP per capita data, where the observations are countries and regions around the world. The data includes over 200 countries' GDP, and ranges from 1990 to 2024. GDP per capita is calculated by dividing a country’s total output by its population and adjusting values with the same international dollars to take into account inflation and living cost differences. The goal of this data is to compare economic performance, living conditions, and economic growth across almost all countries over many years. The data is created by organizations such as the World Bank, IMF, OECD, and Eurostat, and is summarized by Our World in Data. GDP data is collected by national statistical agencies using censuses, surveys, and tax or government data, and then analyzed and organized by the World Bank, IMF, etc.
+
+## Research Questions
+
+1.  Globally, has there been improvement in containing measles and rubella cases in recent years and is there a time of year where these cases become more common?
+2.  Are countries with lower GDP per capita associated with higher numbers of epidemiologically linked measles cases and does this relationship vary by region?
+
+For the remainder of this report, we will be referencing research question 1 as "Measles and Rubella Cases Over Time" and reseach question 2 as "Measles Association with GDP".
+
+## Data Summaries & Visualizations
+
+### Research Question 1: Measles and Rubella Cases Over Time
+
+```{r}
+#| fig-cap-location: bottom
+#| fig-cap: Figure 1. Trends in Measles and Rubella Cases
+#| fig-alt: "Line plot showing total global measles and rubella cases by year from 2012 to 2024, with measles showing larger spikes and greater variability than rubella."
+
+annotate_text <- tibble(
+  year = c(2014.5, 2014.3),
+  y_lab = c(75000, 200000),
+  disease = c("Rubella", "Measles")
+)
+
+cases_year |>
+  group_by(year) |>
+  summarize(measles = sum(measles_total, na.rm = TRUE),
+            rubella = sum(rubella_total, na.rm = TRUE)) |>
+  ggplot() +
+  geom_ribbon(aes(x = year, ymin = measles, ymax = rubella),
+              position = "identity",
+              inherit.aes = FALSE,
+              fill = "#F8F5F0") +
+  geom_line(aes(x = year,
+                y = measles,
+                color = "Measles"), 
+            linewidth = 1) +
+  geom_line(aes(x = year,
+                y = rubella,
+            color = "Rubella"),
+            linewidth = 1) +
+  scale_color_manual(name = "Disease",
+                     values = c("Measles" = "#325D88", "Rubella" = "#3E3F3A")) +
+  scale_x_continuous(breaks = unique(cases_year$year),
+                     expand = c(0.01,0.01)) +
+  scale_y_continuous(breaks = seq(0, 600000, by = 100000),
+                     labels = scales::label_comma()) +
+  geom_text(data = annotate_text,
+            mapping = aes(x = year,
+                          y = y_lab,
+                          label = disease,
+                          color = disease),
+            inherit.aes = FALSE,
+            show.legend = FALSE
+            ) +
+  theme_bw() +
+  labs(x = "Year",
+       y = "Number of Cases",
+       title = "Measles and Rubella Cases Over Time",
+       subtitle = "Similar spikes in number of cases occur between diseases, but measles \ncases are more volatile in the magnitude of change.") +
+  theme(panel.grid.minor = element_blank())
+```
+
+Suprisingly, as shown in Figure 1, there is not a consistent linear trend in global cases for either disease. It does appear that there is a slight generally downward trend in rubella cases, but there still are small spikes in 2013, 2019, and 2024. Total measles cases appears to have the same peaks, but at a much larger magnitude. Recent years have had decreasing number of cases, but overall, there is not a noticeable dip in measeles cases.
+
+```{r}
+#| tbl-cap-location: bottom
+#| tbl-cap: Table 1. Case Counts Compared to the Median Case Count
+
+cases_year |>
+  group_by(year) |>
+  summarize(
+    total_measles = sum(measles_total, na.rm = TRUE),
+    total_rubella = sum(rubella_total, na.rm = TRUE),
+    .groups = "drop") |>
+  mutate(
+    median_measles = median(total_measles),
+    median_rubella = median(total_rubella),
+    measles_vs_median = total_measles - median_measles,
+    rubella_vs_median = total_rubella - median_rubella,
+    measles_pct = (total_measles - median_measles) / median_measles,
+    rubella_pct = (total_rubella - median_rubella) / median_rubella) |>
+  select(year, measles_pct, rubella_pct) |>
+  gt()  |>
+  cols_label(
+     year = md("**Year**"),
+     measles_pct = md("**Measles**"),
+     rubella_pct = md("**Rubella**")
+   ) |>
+   # add a table title
+   tab_header(title = md("Difference in Measles and Rubella Cases Each Year Compared to the Typical Number of Cases")) |>
+   # add a table caption
+   tab_caption(caption = md("Percent change in cases compared to the overall median number of measles and rubella cases.")) |>
+   # bold column labels
+   tab_style(
+     style = cell_text(weight = "bold"),
+     locations = cells_column_labels()
+   ) |>
+  fmt_percent(columns = c(measles_pct, rubella_pct), decimals = 2) 
+```
+
+Percent differences from the median case count of each disease supports our findings in Figure 1. In the peak years 2013, 2019, and 2024, there appears to be large differences from the overall median number is cases for both diseases. The largest difference from the median was in 2019, with the second largest difference in 2024 (Table 1). Interestingly enough, a majority of the recent years aside from 2024 actually had less total cases than the median. The same can be said for rubella, which has mostly had less total cases than the median.
+
+```{r}
+#| fig-cap-location: bottom
+#| fig-cap: Figure 2. Measles and Rubella Cases by Month
+#| warning: false
+#| fig-alt: "Ridgeline density plot of the distribution of global measles case counts across months, showing variation in case frequency throughout the year."
+
+color_gradient <- colorRampPalette(c("#A6DAF5", "#325D88"))(12)
+names(color_gradient) <- month.name
+
+measles <- cases_month |>
+  group_by(month, year) |>
+  summarise(measles_total = sum(measles_total, na.rm = TRUE)) |>
+  mutate(month_full = month.name[month]) |>
+  ggplot(aes(x = measles_total,
+             y = reorder(month_full, -month),
+             group = month,
+             fill = month_full)) +
+  geom_density_ridges() +
+  # geom_density_ridges_gradient(scale = 2, rel_min_height = 0.00000000001,
+  #                              alpha = 0.5) +
+  # scale_fill_viridis(name = "Number of Cases", option = "C") +
+  scale_x_continuous(breaks = seq(0, 140000, by = 40000),
+                     labels = scales::label_comma()) +
+  #AGDAF5  #325D88 
+  scale_fill_manual(values = color_gradient) +
+  scale_y_discrete(expand = c(0.0001,0.5)) +
+  theme_minimal() +
+  labs(x = "Number of Cases",
+       y = "",
+       title = "Measles") +
+  theme(panel.grid.minor.x = element_blank(),
+        legend.position = "none")
+
+
+color_gradient <- colorRampPalette(c("#B8B9B6", "#3E3F3A"))(12)
+names(color_gradient) <- month.name
+
+rubella <- cases_month |>
+  group_by(month, year) |>
+  summarise(rubella_total = sum(rubella_total, na.rm = TRUE)) |>
+  mutate(month_full = month.name[month]) |>
+  ggplot(aes(x = rubella_total,
+             y = reorder(month_full, -month),
+             group = month,
+             fill = month_full)) +
+  geom_density_ridges() +
+  scale_x_continuous(breaks = seq(0, 20000, by = 4000),
+                     labels = scales::label_comma()) +
+  scale_fill_manual(values = color_gradient) +
+  scale_y_discrete(expand = c(0.0001,0.5)) +
+  theme_minimal() +
+  labs(x = "Number of Cases",
+       y = "",
+       title = "Rubella") +
+  theme(panel.grid.minor.x = element_blank(),
+        legend.position = "none")
+
+
+(measles + rubella) +
+  plot_layout(guides = "collect",
+              axis_titles = "collect") +
+  plot_annotation(title = "Comparison of Global Measles and Rubella Cases for Each Month",
+                  subtitle = "Monthly distributions span case counts from 2012 to 2025")
+```
+
+Measles and rubella are highly contagious diseases, but it appears they slightly differ in the time of year they are most common. More measles cases seem to occur during late winter months, with more cases being observed starting November or December, but notiecably increases January to May (Figure 2). Higher case counts of rubella appear similarly in overlapping months, but the period of common cases is shifted forward, from January to June or July (Figure 2).
+
+```{r}
+#| tbl-cap-location: bottom
+#| tbl-cap: Table 1. Months with the Most Measles Cases
+
+# function to get the month of a year with the highest number of cases
+get_max_month <- function(yr){
+  cases_month |>
+    filter(year == yr) |>
+    group_by(month) |>
+    summarize(num_measles = sum(measles_total, na.rm = TRUE),
+              num_rubella = sum(rubella_total, na.rm = TRUE),
+              .groups = "drop") |>
+    summarize(
+      measles_month = month[which.max(num_measles)],
+      measles_cases = max(num_measles),
+      rubella_month = month[which.max(num_rubella)],
+      rubella_cases = max(num_rubella)
+    ) |>
+    mutate(year = yr, .before = 1)
+}
+
+cases_year |>
+  distinct(year) |>
+  pull(year) |>
+  # apply function to each year in the data
+  map_dfr(get_max_month) |>
+  # convert month abbreviations to month names
+  mutate(measles_month = month.name[measles_month],
+         rubella_month = month.name[rubella_month]) |>
+  # # make a gt table object
+  gt() |>
+  # rename and bold each column
+  cols_label(
+     year = md("**Year**"),
+     measles_month = md("**Month**"),
+     measles_cases = md("**Cases**"),
+     rubella_month = md("**Month**"),
+     rubella_cases = md("**Cases**")
+   ) |>
+   # add a table title
+   tab_header(title = md("Time of Year with Increased Measles and Rubella Cases Over Time")) |>
+   # add a table caption
+   tab_caption(caption = md("Months with the Highest Number of Cases.")) |>
+   # bold column labels
+   tab_style(
+     style = cell_text(weight = "bold"),
+     locations = cells_column_labels()
+   ) |>
+    tab_spanner(
+      label = "Measles",
+      columns = c(measles_month, measles_cases)
+    ) |>
+    tab_spanner(
+      label = "Rubella",
+      columns = c(rubella_month, rubella_cases)
+    ) |>
+   fmt_number(columns = c(3,5), sep_mark = ",", decimals = 0)
+```
+
+We further investigated the obesrved global case counts to find the month with the most cases of each disease over time. As shown in Table 2, the month with the highest frequency of having the most measles cases in a year was March, with February following. March is also the month that has had the most rubella cases, and April as the second most frequent month (Table 2). These summaries similarly support the findings of Figure 2.
+
+### Research Question 2: Measles Association with GDP
+
+## Data Model
+
+We chose
+
+Are countries with lower GDP per capita associated with higher numbers of epidemiologically linked measles cases?
