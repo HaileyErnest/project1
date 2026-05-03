@@ -88,7 +88,7 @@ cases_gdp <- cases_month |>
     by = c("country", "year"),
     suffix = c("_month", "_year")
   ) |>
-  # make a tibble to join (threw an error without this)
+  # make a tibble to join
   as_tibble()
 ```
 
