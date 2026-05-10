@@ -1,12 +1,17 @@
 ---
-title: "Project 1 Final Deliverable"
+title: "Investigating Global Trends in Measles and Rubella Cases"
 author: "Hailey Ernest and Nicole Yee"
-format: html
+format: 
+  html:
+    theme: sandstone
+    code-fold: true
 editor: visual
 embed-resources: true
-theme: sandstone
-code-fold: true
 ---
+
+<center>![](who-logo.png){width="150px"}</center>
+
+Measles and rubella are highly contagious diseases for which vaccines are widely available. Although rubella outbreaks are relatively uncommon, measles outbreaks continue to occur fairly often and remain a risk in terms of public health. In this report, we investigate patterns in measles and rubella cases to provide insight into how these diseases vary across the world and over time.
 
 ## Data Context
 
@@ -190,22 +195,22 @@ cases_gdp_year <- cases_year |>
   )
 ```
 
-We utilized data from several sources. Our report is mainly centered around measles and rubella cases, but we incorporated additional data about GDP.
+In this report, we utilized data from several sources. Our main focus is centered around measles and rubella cases, but we incorporated additional data about GDP.
 
-Our main set of data presents suspected and confirmed classification of measles and rubella cases across regions and countries in the world. It is presented in two forms: monthly case counts (cases_month) and yearly summaries (cases_year). The data is collected and reported by healthcare providers and national surveillance systems and compiled by the World Health Organization (WHO). The data was downloaded on June 12, 2025, and is finalized by July of each year. The data covers regions and countries worldwide. The data is collected to track and confirm measles and rubella cases across populations over time. Suspected measles cases are identified based on symptoms or clinical judgment, reported through national surveillance systems to the WHO, and then classified as clinically compatible, epidemiologically linked, or laboratory-confirmed, with total measles cases calculated as the sum of these categories for most countries.
+Our main set of data presents suspected and confirmed classification of measles and rubella cases across regions and countries in the world. It is presented in two forms: monthly case counts and yearly summaries. The data is collected and reported by healthcare providers and national surveillance systems and compiled by the World Health Organization (WHO). The data was downloaded on June 12, 2025, and is finalized by July of each year. The data covers regions and countries worldwide. The data is collected to track and confirm measles and rubella cases across populations over time. Suspected measles cases are identified based on symptoms or clinical judgment, reported through national surveillance systems to the WHO, and then classified as clinically compatible, epidemiologically linked, or laboratory-confirmed, with total measles cases calculated as the sum of these categories for most countries.
 
 We additionally used country-level GDP per capita data, where the observations are countries and regions around the world. The data includes over 200 countries' GDP, and ranges from 1990 to 2024. GDP per capita is calculated by dividing a country’s total output by its population and adjusting values with the same international dollars to take into account inflation and living cost differences. The goal of this data is to compare economic performance, living conditions, and economic growth across almost all countries over many years. The data is created by organizations such as the World Bank, IMF, OECD, and Eurostat, and is summarized by Our World in Data. GDP data is collected by national statistical agencies using censuses, surveys, and tax or government data, and then analyzed and organized by the World Bank, IMF, etc.
 
-## Research Questions
+## Our areas of interest
+
+In this report, we analyzed the data to gain insight into two areas of interest listed below.
 
 1.  Globally, has there been improvement in containing measles and rubella cases in recent years and is there a time of year where these cases become more common?
 2.  Are countries with lower GDP per capita associated with higher numbers of epidemiologically linked measles cases and does this relationship vary by region?
 
-For the remainder of this report, we will be referencing research question 1 as "Measles and Rubella Cases Over Time" and research question 2 as "Measles Association with GDP per capita".
+### Investigating measles and rubella in relation to time
 
-## Data Summaries & Visualizations
-
-### Research Question 1: Measles and Rubella Cases Over Time
+We begin by looking into if there is notable improvement in global disease containment in recent years, and if there is a time of year where cases are more common.
 
 ```{r}
 #| fig-cap-location: bottom
@@ -425,7 +430,9 @@ cases_year |>
 
 We further investigated the observed global case counts to find the month with the most cases of each disease over time. As shown in Table 2, the month with the highest frequency of having the most measles cases in a year was March, with February following. March is also the month that has had the most rubella cases, and April as the second most frequent month (Table 2). These summaries similarly support the findings of Figure 2.
 
-### Research Question 2: Measles Association with GDP per capita
+### Investigating the relationship between measles cases, country GDP, and region
+
+In the remainder of this report, we will transition to examining measles cases in relation to GDP per capita, and if that relationship varies by region of the world.
 
 ```{r}
 #| fig-cap-location: bottom
@@ -528,7 +535,8 @@ cases_month |>
   # add a table caption
   tab_caption(
     caption = md("Changes in each region's confirmed measles cases makeup over time.")
-  )
+  ) |>
+  opt_interactive()
 ```
 
 In Table 3, the proportion of confirmed measles cases that are epidemiologically linked continue to show variation across regions and over time. Africa and South-East Asia have higher proportions, meaning a larger number of cases are linked through geographic transmission. Europe and the Eastern Mediterranean show moderate and slightly varying proportions over time. The Americas and Western Pacific regions show very low proportions over time, and that less cases are epidemiologically linked.
@@ -674,11 +682,9 @@ epi_region_plot + gdp_region +
 
 To understand the findings of differences in epidemiologically linked measles cases and GDP per capita across regions, the distribution of each is visualized in Figure 4. Epidemiologically linked cases show the Americas have the lowest case levels, Europe, Eastern Mediterranean, and the Western Pacific have slightly higher cases, and Africa and South-East Asia have the highest concentrations of cases. The distribution of GDP per capita shows that Africa has the lowest GDP levels, then Eastern Mediterranean and South-East Asia, followed with the Americas and Western Pacific that have higher GDP levels, and Europe has the highest overall. This explains the patterns found in Figure 3, as limited GDP differences within Europe, Africa, and South-East Asia makes it challenging to identify a clear relationship between GDP and epidemiologically linked measles cases.
 
-## Data Model
+#### To further investigate this relationship, we fit a log-linear regression model.
 
-### Research Question
-
-#### Are countries with lower GDP per capita associated with higher numbers of epidemiologically linked measles cases and does this relationship vary by region?
+As a reminder, we are looking to answer if countries with lower GDP per capita are associated with higher numbers of epidemiologically linked measles cases. In addition, we want to see if this relationship varies by region of the world.
 
 This model evaluates the relationship between GDP per capita and epidemiologically linked measles cases. GDP per capita is used as a measure of a country’s economic development, and epidemiologically linked cases show patterns of disease transmission based on geography. The model uses country-year observations from 2012 to 2024. The variables are both log-transformed to account for skewness across countries, since changes at lower income levels might have a larger impact than at higher income levels. This is consistent with used approaches in recent global health research.
 
