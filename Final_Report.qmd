@@ -44,6 +44,8 @@ library(patchwork)
 #install.packages("rsconnect")
 library(rsconnect)
 rsconnect::writeManifest()
+library(lme4)
+library(lmerTest)
 
 cases_month <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/main/data/2025/2025-06-24/cases_month.csv') |>
   clean_names()
@@ -682,20 +684,20 @@ epi_region_plot + gdp_region +
 
 To understand the findings of differences in epidemiologically linked measles cases and GDP per capita across regions, the distribution of each is visualized in Figure 4. Epidemiologically linked cases show the Americas have the lowest case levels, Europe, Eastern Mediterranean, and the Western Pacific have slightly higher cases, and Africa and South-East Asia have the highest concentrations of cases. The distribution of GDP per capita shows that Africa has the lowest GDP levels, then Eastern Mediterranean and South-East Asia, followed with the Americas and Western Pacific that have higher GDP levels, and Europe has the highest overall. This explains the patterns found in Figure 3, as limited GDP differences within Europe, Africa, and South-East Asia makes it challenging to identify a clear relationship between GDP and epidemiologically linked measles cases.
 
-#### To further investigate this relationship, we fit a log-linear regression model.
+#### **To further investigate this relationship, we fit a mixed-effects log-linear regression model with country included as a random effect.**
 
 As a reminder, we are looking to answer if countries with lower GDP per capita are associated with higher numbers of epidemiologically linked measles cases. In addition, we want to see if this relationship varies by region of the world.
 
 This model evaluates the relationship between GDP per capita and epidemiologically linked measles cases. GDP per capita is used as a measure of a country’s economic development, and epidemiologically linked cases show patterns of disease transmission based on geography. The model uses country-year observations from 2012 to 2024. The variables are both log-transformed to account for skewness across countries, since changes at lower income levels might have a larger impact than at higher income levels. This is consistent with used approaches in recent global health research.
 
-Region is included as a categorical variable to account for structural differences in disease transmission and reporting across geographic areas, and an interaction between GDP and region is included to assess whether the relationship between GDP per capita and epidemiologically linked measles cases varies across regions.
+Region is included as a categorical variable to account for structural differences in disease transmission and reporting across geographic areas, and country is included as a random effect to account for repeated yearly observations within countries. Africa (AFRO) is used as the reference region, so all regional estimates reflect differences relative to Africa. We fit a simple log-log linear regression model to explore the relationship between GDP per capita and epidemiologically linked measles cases without accounting for region or repeated country observations. Next, we address the limitations of this exploratory model with a mixed-effects model. A likelihood ratio test was used to compare a model with a GDP-by-region interaction to a simpler model without the interaction to determine whether the relationship between GDP per capita and epidemiologically linked measles cases differed across regions. The model includes six fixed-effect hypothesis tests, thus a Bonferroni correction was applied by adjusting the significance threshold to α = 0.0083 (0.05 / 6) to reduce the risk of type 1 error inflation from multiple comparisons.
 
 ```{r}
 #| warning: false
+#| message: false
 #| tbl-cap-location: bottom
-#| tbl-cap: Table 5. Model results analyzing GDP and region effects on epidemiologically linked measles cases.
+#| tbl-cap: Table 5. Mixed model results analyzing GDP, region, and epidemiologically linked measles cases.
 
-# create model dataset
 epi_gdp_model_data <- cases_gdp |>
   distinct(country, year, region_year, gdp_per_capita, measles_epi_linked_year) |>
   rename(region = region_year) |>
@@ -705,61 +707,163 @@ epi_gdp_model_data <- cases_gdp |>
   ) |>
   drop_na(gdp_per_capita, measles_epi_linked_year, region) |>
   mutate(
-    # make region a categorical variable
     region = factor(region),
-    # log transform variables to reduce skew
     log_gdp = log10(gdp_per_capita),
     log_epi_linked = log1p(measles_epi_linked_year)
   )
 
-# fit model with GDP, region, and GDP-by-region interaction
-epi_gdp_model <- lm(
-  log_epi_linked ~ log_gdp * region,
+# fit simple model (exploratory, no region or random effect)
+epi_gdp_simple_model <- lm(
+  log_epi_linked ~ log_gdp,
   data = epi_gdp_model_data
 )
 
-# make coefficient table from model summary
-coef_table <- as.data.frame(summary(epi_gdp_model)$coefficients) |>
-  rownames_to_column(var = "term")
+# fit mixed model with GDP, region, and GDP-by-region interaction
+epi_gdp_model <- lmer(
+  log_epi_linked ~ log_gdp * region + (1 | country),
+  data = epi_gdp_model_data
+)
 
-coef_table |>
-  gt() |>
-  # format values
+# fit simpler model without interaction
+epi_gdp_model_no_interaction <- lmer(
+  log_epi_linked ~ log_gdp + region + (1 | country),
+  data = epi_gdp_model_data
+)
+
+# compare simpler model to interaction model
+model_comparison <- anova(
+  epi_gdp_model_no_interaction,
+  epi_gdp_model
+)
+
+# make simple model coefficient table
+simple_table <- as.data.frame(summary(epi_gdp_simple_model)$coefficients) |>
+  rownames_to_column(var = "term") |>
+  rename(
+    estimate = Estimate,
+    std_error = `Std. Error`,
+    t_statistic = `t value`,
+    p_value = `Pr(>|t|)`
+  ) |>
+  mutate(
+    result_type = "Simple model",
+    chisq = NA_real_,
+    df = NA_real_,
+    conclusion = case_when(
+      p_value < 0.05 ~ "Significant",
+      TRUE ~ "Not significant"
+    )
+  ) |>
+  select(
+    result_type,
+    term,
+    estimate,
+    std_error,
+    df,
+    t_statistic,
+    chisq,
+    p_value,
+    conclusion
+  )
+
+# make coefficient table from mixed model
+coef_table <- as.data.frame(summary(epi_gdp_model_no_interaction)$coefficients) |>
+  rownames_to_column(var = "term") |>
+  rename(
+    estimate = Estimate,
+    std_error = `Std. Error`,
+    df = df,
+    t_statistic = `t value`,
+    p_value = `Pr(>|t|)`
+  ) |>
+  mutate(
+    result_type = "Mixed model",
+    chisq = NA_real_,
+    conclusion = case_when(
+      p_value < (0.05 / 6) ~ "Significant",  # Bonferroni correction for 6 tests
+      TRUE ~ "Not significant"
+    )
+  ) |>
+  select(
+    result_type,
+    term,
+    estimate,
+    std_error,
+    df,
+    t_statistic,
+    chisq,
+    p_value,
+    conclusion
+  )
+
+# make model comparison row
+comparison_table <- tibble(
+  result_type = "Interaction Model comparison",
+  term = "GDP by region interaction",
+  estimate = NA_real_,
+  std_error = NA_real_,
+  df = model_comparison$Df[2],
+  t_statistic = NA_real_,
+  chisq = model_comparison$Chisq[2],
+  p_value = model_comparison$`Pr(>Chisq)`[2],
+  conclusion = case_when(
+    p_value < 0.05 ~ "Significant",
+    TRUE ~ "Not significant"
+  )
+)
+
+# combine into one gt table
+bind_rows(simple_table, coef_table, comparison_table) |>
+  gt(groupname_col = "result_type") |>
   fmt_number(
-    columns = c(Estimate, `Std. Error`, `t value`, `Pr(>|t|)`),
+    columns = c(estimate, std_error, df, t_statistic, chisq, p_value),
     decimals = 3
   ) |>
+  sub_missing(
+    columns = c(estimate, std_error, df, t_statistic, chisq, p_value),
+    missing_text = ""
+  ) |>
   sub_small_vals(
-    columns = `Pr(>|t|)`,
+    columns = p_value,
     threshold = 0.001
   ) |>
   cols_align(align = "center") |>
-  # rename column headers
   cols_label(
     term = "Model Term",
-    Estimate = "Estimate",
-    `Std. Error` = "Standard Error",
-    `t value` = "t Statistic",
-    `Pr(>|t|)` = "p-value"
+    estimate = "Estimate",
+    std_error = "Standard Error",
+    df = "df",
+    t_statistic = "t Statistic",
+    chisq = "Chi-square",
+    p_value = "p-value",
+    conclusion = "Conclusion"
   ) |>
-  # add title and subtitle
   tab_header(
     title = "Model Results: GDP, Region, and Epidemiologically Linked Measles Cases",
-    subtitle = "Log-log linear regression model with GDP by region interaction"
+    subtitle = "Mixed-effects model with country as a random effect"
   ) |>
-  # add caption
   tab_caption(
-    caption = "Table summarizing the relationship between GDP per capita and epidemiologically linked measles cases using yearly country observations from 2012–2024."
+    caption = "Table includes the simple exploratory model, the mixed-effects model, and the likelihood ratio test comparing it to the GDP by region interaction model."
   ) |>
-  # bold column labels
+  tab_style(
+    style = list(
+      cell_fill(color = "#DCEAF4"),
+      cell_text(weight = "bold", size = px(15))
+    ),
+    locations = cells_row_groups()
+  ) |>
   tab_style(
     style = cell_text(weight = "bold"),
     locations = cells_column_labels()
   )
 ```
 
-The model reveals significant trends. The baseline region in this model is Africa. In Africa, there isn't enough statistically significant evidence of a negative association between GDP per capita and epidemiologically linked measles cases. Eastern Mediterranean (EMRO) and South-East Asia (SEARO) are positively and significantly associated with higher epidemiologically linked measles cases than Africa, accounting for GDP level. Western Pacific (WPRO) is negatively and significantly associated with lower measles cases than Africa, accounting for GDP level. The Americas (AMRO) and Europe (EURO) do not show statistically significant differences from Africa at baseline GDP levels.
+The simple exploratory model shows that GDP per capita is negatively and significantly associated with epidemiologically linked measles cases (p \< 0.001) alone, meaning higher GDP per capita is associated with lower cases. However, this model does not account for repeated country observations or regional differences.
 
-The interaction terms show that the relationship between GDP per capita and epidemiologically linked measles cases differs by region. In Eastern Mediterranean and South-East Asia, the association between GDP and measles cases is more negative than in Africa, meaning an increase in GDP is associated with a decrease in cases. Contrary to Western Pacific which shows a positive interaction, meaning that the relationship between GDP and measles cases is less negative than in Africa. The interaction effects for the Americas and Europe do not show statistically significant evidence that the relationship between GDP and measles cases differs from Africa in these regions.
+The model results show that there isn't enough statistically significant evidence that the relationship between GDP per capita and epidemiologically linked measles cases differs across regions. The likelihood ratio test comparing the interaction model to the simpler model was not statistically significant (p-value = 0.105), so the simpler mixed-effects model without the interaction was used for interpretation.
 
-Overall, the results demonstrate that GDP per capita's relationship with epidemiologically linked measles cases varies across regions, and that economic development affects disease patterns differently based on geographic context. Specifically, countries in the Eastern Mediterranean and South-East Asia regions with lower GDP per capita were found to be associated with higher numbers of epidemiologically linked measles cases.
+Also, the results show regional differences in epidemiologically linked measles cases after accounting for GDP per capita and repeated country observations over years. Using Africa as the reference region, and applying a Bonferroni correction (α = 0.0083) to account for multiple comparisons, only the Americas (AMRO) are significantly associated with low log-transformed epidemiologically linked measles cases. Western Pacific (WPRO) and South-East Asia (SEARO) did not meet the adjusted significance threshold and therefore not significantly associated with log-transformed cases. Eastern Mediterranean (EMRO) and Europe (EURO) also don't show statistically significant differences from Africa.
+
+Interestingly, GDP per capita was significant in the simple model but not significant after accounting for regional differences and repeated country observations. This suggests that the initial association between GDP per capita and epidemiologically linked measles cases was partly explained by regional and country variation.
+
+Overall, the results indicate that epidemiologically linked measles cases vary across regions, but there isn't enough statistically significant evidence that the relationship between GDP per capita and epidemiologically linked measles cases changes by region. Finally, there isn't enough statistically significant evidence of an overall association between GDP per capita and epidemiologically linked measles cases after accounting for regional differences and repeated country observations.
